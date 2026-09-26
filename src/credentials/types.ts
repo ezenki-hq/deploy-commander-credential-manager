@@ -16,3 +16,6 @@ export type TrackedCredential = {
 export type TrackingMutation =
   | { kind: "upsert"; target: CredentialTarget; username: string }
   | { kind: "delete"; target: CredentialTarget };
+
+export type OperationOutcome =
+  { kind: "success" } | { kind: "tracking_failed"; pending: TrackingMutation };
