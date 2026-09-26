@@ -6,3 +6,13 @@ export type CredentialCaller = Pick<
   RPCCaller,
   "databaseQuery" | "addPlatformCredentials" | "removePlatformCredentials"
 >;
+
+export type TrackedCredential = {
+  target: CredentialTarget;
+  username: string;
+  updatedAt: string;
+};
+
+export type TrackingMutation =
+  | { kind: "upsert"; target: CredentialTarget; username: string }
+  | { kind: "delete"; target: CredentialTarget };
