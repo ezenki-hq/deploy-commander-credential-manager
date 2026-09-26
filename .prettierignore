@@ -4,4 +4,5 @@ dist/
 coverage/
 .worktrees/
 .superpowers/
+.devcontainer/
 docs/
