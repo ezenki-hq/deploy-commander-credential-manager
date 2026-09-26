@@ -239,7 +239,7 @@ Platform credential permission grants can also be configured for a manager:
   "permissions": {
     "platform_credentials": {
       "add": ["docker"],
-      "remove": ["ghcr"]
+      "remove": ["docker"]
     }
   },
   "buildDirectory": "dist"
@@ -360,7 +360,11 @@ try {
   const run = await caller.getRun(runId);
   console.log(run);
 } catch (error: any) {
-  console.error(error?.message ?? "RPC call failed", error?.status, error?.details);
+  console.error(
+    error?.message ?? "RPC call failed",
+    error?.status,
+    error?.details,
+  );
 }
 ```
 
@@ -652,7 +656,11 @@ Example:
 ```ts
 const metadata = await caller.getMetadata();
 
-if (metadata && typeof metadata === "object" && typeof metadata.resourceId === "string") {
+if (
+  metadata &&
+  typeof metadata === "object" &&
+  typeof metadata.resourceId === "string"
+) {
   console.log(metadata.resourceId);
 }
 ```
@@ -664,7 +672,14 @@ the manager. The interface library sends credential batches through the
 Deploy Commander RPC bridge; the host applies the current manager scope and
 checks the manager's add or remove grant for each platform.
 
-Add credentials with `addPlatformCredentials`:
+#### Docker credential setup
+
+Use the platform name `docker` for Docker Hub and every other Docker registry,
+including GHCR. A Docker credential contains an `auth` object. For username and
+password authentication, use `kind: "basic"` inside `auth`; a registry token
+used as a password belongs in the `password` field.
+
+Add or replace Docker Hub and registry-prefix credentials in one call:
 
 ```ts
 const added = await caller.addPlatformCredentials([
@@ -672,8 +687,11 @@ const added = await caller.addPlatformCredentials([
     platform: "docker",
     credential: {
       kind: "docker_hub",
-      username: "robot",
-      password: passwordFromSecureInput,
+      auth: {
+        kind: "basic",
+        username: "robot",
+        password: passwordFromSecureInput,
+      },
     },
   },
   {
@@ -681,18 +699,36 @@ const added = await caller.addPlatformCredentials([
     credential: {
       kind: "prefix",
       prefix: "ghcr.io/team",
-      username: "robot",
-      password: tokenFromSecureInput,
+      auth: {
+        kind: "basic",
+        username: "robot",
+        password: tokenFromSecureInput,
+      },
     },
   },
 ]);
 ```
 
-Remove credentials with `removePlatformCredentials` and the platform-specific
+For registries that issue a Docker identity token, `auth` can instead be
+`{ kind: "identity_token", token: tokenFromSecureInput }`. A Docker Hub
+credential is selected for image names without an explicit registry host, such
+as `alpine:latest` or `library/alpine:latest`. An image with a host, including
+`docker.io/library/alpine:latest`, uses the longest matching prefix credential;
+it does not fall back to the Docker Hub credential. A prefix can be a registry
+host (`ghcr.io`) or a host plus repository path (`ghcr.io/team`). Matching
+respects path boundaries, so `ghcr.io/team` does not match `ghcr.io/team2`.
+Prefixes must omit URL schemes and trailing slashes. Adding a credential again
+for the same Docker Hub scope or normalized prefix replaces its value.
+
+Remove either credential scope with `removePlatformCredentials` and its
 selector:
 
 ```ts
 const removed = await caller.removePlatformCredentials([
+  {
+    platform: "docker",
+    selector: { kind: "docker_hub" },
+  },
   {
     platform: "docker",
     selector: { kind: "prefix", prefix: "ghcr.io/team" },
@@ -1047,7 +1083,12 @@ Before creating a connection, use `getConnections` with manager and resource fil
 Example:
 
 ```ts
-const existing = await caller.getConnections(1, 0, connectionOwningManagerId, resourceId);
+const existing = await caller.getConnections(
+  1,
+  0,
+  connectionOwningManagerId,
+  resourceId,
+);
 
 if (existing.total > 0) {
   throw new Error("A connection already exists for this manager and resource");
@@ -1442,7 +1483,9 @@ async function startApplication() {
 
   const caller = RPC.SetupRPCCaller(wire);
 
-  let tokenManager: Awaited<ReturnType<typeof Caller.generateTokenManager>> | undefined;
+  let tokenManager:
+    | Awaited<ReturnType<typeof Caller.generateTokenManager>>
+    | undefined;
 
   try {
     const managerId = await caller.getManager();
@@ -1481,7 +1524,11 @@ async function configureManager(
 
   const metadata = await caller.getMetadata();
 
-  if (!metadata || typeof metadata !== "object" || typeof metadata.resourceId !== "string") {
+  if (
+    !metadata ||
+    typeof metadata !== "object" ||
+    typeof metadata.resourceId !== "string"
+  ) {
     wire.close({
       manager: currentManager.id,
       ok: false,
