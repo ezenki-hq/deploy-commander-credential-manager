@@ -78,6 +78,7 @@ export default function App({ caller }: { caller: CredentialCaller }) {
     username: string,
     secret: string,
   ): Promise<void> {
+    if (writesDisabled) return;
     setActionBusy(true);
     try {
       const outcome = await saveCredential(caller, target, username, secret);
@@ -94,6 +95,7 @@ export default function App({ caller }: { caller: CredentialCaller }) {
 
   async function confirmRemove() {
     if (!removeTarget) return;
+    setForm(null);
     setActionBusy(true);
     setRemoveError("");
     try {
@@ -280,7 +282,8 @@ export default function App({ caller }: { caller: CredentialCaller }) {
 
               {editingHub && (
                 <CredentialForm
-                  busy={actionBusy}
+                  busy={writesDisabled}
+                  key="docker_hub"
                   initialTarget={form.target}
                   initialUsername={form.username}
                   onCancel={() => setForm(null)}
@@ -336,7 +339,8 @@ export default function App({ caller }: { caller: CredentialCaller }) {
 
               {editingPrefix && (
                 <CredentialForm
-                  busy={actionBusy}
+                  busy={writesDisabled}
+                  key={form.target?.kind === "prefix" ? form.target.prefix : "new-prefix"}
                   initialTarget={form.target}
                   initialUsername={form.username}
                   onCancel={() => setForm(null)}

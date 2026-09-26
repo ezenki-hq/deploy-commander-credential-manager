@@ -37,7 +37,11 @@ export function normalizePrefix(raw: string): string {
       throw new Error(PREFIX_ERROR);
     }
 
-    return path ? `${parsed.host}/${path}` : parsed.host;
+    const explicitPort = hostInput.startsWith("[")
+      ? hostInput.match(/^\[[^\]]+\]:(\d+)$/)?.[1]
+      : hostInput.match(/:(\d+)$/)?.[1];
+    const host = `${parsed.hostname}${explicitPort ? `:${explicitPort}` : ""}`;
+    return path ? `${host}/${path}` : host;
   } catch {
     throw new Error(PREFIX_ERROR);
   }

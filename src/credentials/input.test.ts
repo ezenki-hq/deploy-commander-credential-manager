@@ -10,6 +10,13 @@ describe("normalizePrefix", () => {
     expect(normalizePrefix("ghcr.io/team")).toBe(normalizePrefix("GHCR.IO/team"));
   });
 
+  it.each(["GHCR.IO:443", "GHCR.IO:443/team"])(
+    "preserves an explicitly supplied default port in %s",
+    (value) => {
+      expect(normalizePrefix(value)).toBe(value.toLowerCase());
+    },
+  );
+
   it.each(["https://ghcr.io/team", "ghcr.io/team/", "ghcr.io/team?x=1", "/team", "ghcr.io/a b"])(
     "rejects invalid prefix %s",
     (value) => {

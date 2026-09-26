@@ -95,6 +95,61 @@ describe("credential manager", () => {
     expect(screen.getByText(/docker\.io/)).toBeVisible();
   });
 
+  it("loads the selected prefix when switching between replacement forms", async () => {
+    const user = userEvent.setup();
+    const otherRecord: TrackedCredential = {
+      target: { kind: "prefix", prefix: "registry.example/team" },
+      username: "other-robot",
+      updatedAt: "2026-09-26T02:00:00Z",
+    };
+    services.listTracked.mockResolvedValueOnce([prefixRecord, otherRecord]);
+
+    renderApp();
+    await user.click(await screen.findByRole("button", { name: /replace ghcr.io\/team/i }));
+    expect(screen.getByLabelText("Registry host or prefix")).toHaveValue("ghcr.io/team");
+    await user.type(
+      screen.getByLabelText("Password, personal access token, or secret"),
+      "first-secret",
+    );
+    await user.click(screen.getByRole("button", { name: /replace registry.example\/team/i }));
+
+    expect(screen.getByLabelText("Registry host or prefix")).toHaveValue("registry.example/team");
+    expect(screen.getByLabelText("Username")).toHaveValue("other-robot");
+    expect(screen.getByLabelText("Password, personal access token, or secret")).toHaveValue("");
+  });
+
+  it("keeps the removal tracking retry intact while a credential form is open", async () => {
+    const user = userEvent.setup();
+    const otherRecord: TrackedCredential = {
+      target: { kind: "prefix", prefix: "registry.example/team" },
+      username: "other-robot",
+      updatedAt: "2026-09-26T02:00:00Z",
+    };
+    const pendingDelete = { kind: "delete" as const, target: otherRecord.target };
+    services.listTracked.mockResolvedValueOnce([prefixRecord, otherRecord]);
+    services.removeCredential.mockResolvedValueOnce({
+      kind: "tracking_failed",
+      pending: pendingDelete,
+    });
+    services.saveCredential.mockResolvedValueOnce({
+      kind: "tracking_failed",
+      pending: { kind: "upsert", target: prefixRecord.target, username: "changed-robot" },
+    });
+
+    renderApp();
+    await user.click(await screen.findByRole("button", { name: /replace ghcr.io\/team/i }));
+    await user.click(screen.getByRole("button", { name: /remove registry.example\/team/i }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: /remove credential/i }),
+    );
+
+    expect(screen.queryByLabelText("Password, personal access token, or secret")).toBeNull();
+    await user.click(screen.getByRole("button", { name: /retry tracking update/i }));
+
+    expect(services.retryTracking).toHaveBeenCalledWith(expect.anything(), pendingDelete);
+    expect(services.saveCredential).not.toHaveBeenCalled();
+  });
+
   it("clears the secret after a rejected platform operation", async () => {
     const user = userEvent.setup();
     services.saveCredential.mockRejectedValueOnce(
@@ -179,5 +234,33 @@ describe("credential manager", () => {
     await waitFor(() =>
       expect(screen.getByText(/no registry-prefix credentials tracked/i)).toBeVisible(),
     );
+  });
+
+  it("keeps keyboard focus inside the removal dialog and restores it on Escape", async () => {
+    const user = userEvent.setup();
+    services.listTracked.mockResolvedValueOnce([prefixRecord]);
+
+    renderApp();
+    const removeButton = await screen.findByRole("button", {
+      name: /remove ghcr.io\/team/i,
+    });
+    await user.click(removeButton);
+
+    const cancelButton = within(screen.getByRole("dialog")).getByRole("button", {
+      name: /cancel/i,
+    });
+    const confirmButton = within(screen.getByRole("dialog")).getByRole("button", {
+      name: /remove credential/i,
+    });
+    expect(cancelButton).toHaveFocus();
+
+    await user.keyboard("{Tab}");
+    expect(confirmButton).toHaveFocus();
+    await user.keyboard("{Tab}");
+    expect(cancelButton).toHaveFocus();
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(removeButton).toHaveFocus();
   });
 });
