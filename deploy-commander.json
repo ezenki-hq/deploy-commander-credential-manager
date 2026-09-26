@@ -1,0 +1,12 @@
+{
+  "name": "deploy-commander-credential-manager",
+  "kind": "pipeline",
+  "description": "Configure Docker platform credentials",
+  "buildDirectory": "dist",
+  "permissions": {
+    "platform_credentials": {
+      "add": ["docker"],
+      "remove": ["docker"]
+    }
+  }
+}

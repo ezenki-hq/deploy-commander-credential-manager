@@ -1,5 +1,7 @@
-.worktrees/
 .env
 node_modules/
 dist/
 coverage/
+.worktrees/
+.superpowers/
+docs/
