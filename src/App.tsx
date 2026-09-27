@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import CredentialForm from "./components/CredentialForm";
 import RemoveDialog from "./components/RemoveDialog";
 import { removeCredential, retryTracking, saveCredential } from "./credentials/operations";
-import { listTracked } from "./credentials/tracking";
+import { listTracked, TrackingLoadError } from "./credentials/tracking";
 import type {
   CredentialCaller,
   CredentialTarget,
@@ -53,7 +53,7 @@ export default function App({ caller }: { caller: CredentialCaller }) {
       setLoadState("ready");
     } catch (error) {
       setLoadError(
-        error instanceof Error ? error.message : "The credential tracking request failed.",
+        error instanceof TrackingLoadError ? error.message : "The manager database request failed.",
       );
       setLoadState("error");
     }
@@ -198,6 +198,15 @@ export default function App({ caller }: { caller: CredentialCaller }) {
           </section>
         )}
 
+        {operationNotice && (
+          <p
+            className="mb-7 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-medium text-emerald-900"
+            role="status"
+          >
+            {operationNotice}
+          </p>
+        )}
+
         {loadState === "loading" && (
           <p
             className="rounded-2xl border border-slate-200 bg-white px-5 py-6 text-sm text-slate-600 shadow-sm"
@@ -226,15 +235,6 @@ export default function App({ caller }: { caller: CredentialCaller }) {
                 {actionBusy ? "Retrying…" : "Retry loading"}
               </button>
             </section>
-
-            {operationNotice && (
-              <p
-                className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-medium text-emerald-900"
-                role="status"
-              >
-                {operationNotice}
-              </p>
-            )}
 
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
               <h2 className="text-lg font-semibold text-slate-950">

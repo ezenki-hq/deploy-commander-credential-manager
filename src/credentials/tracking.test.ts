@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CredentialCaller } from "./types";
-import { deleteTracked, listTracked, upsertTracked } from "./tracking";
+import { deleteTracked, listTracked, TrackingLoadError, upsertTracked } from "./tracking";
 
 type DatabaseQueryResult = Awaited<ReturnType<CredentialCaller["databaseQuery"]>>;
 
@@ -55,10 +55,12 @@ describe("listTracked", () => {
       queryResult("OK", [{ scope: "prefix", prefix: null, username: "robot", updated_at: "now" }]),
     );
 
-    await expect(listTracked(caller)).rejects.toMatchObject({ category: "invalid_data" });
-    expect(logger).toHaveBeenCalledWith("[credential-manager] tracking load failed", {
+    await expect(listTracked(caller)).rejects.toMatchObject({
       category: "invalid_data",
       message: "Tracking records contain unsupported data.",
+    });
+    expect(logger).toHaveBeenCalledWith("[credential-manager] tracking load failed", {
+      category: "invalid_data",
     });
   });
 
@@ -73,19 +75,17 @@ describe("listTracked", () => {
     const { caller, databaseQuery } = createCaller(queryResult("OK", []));
     databaseQuery.mockRejectedValueOnce({
       code: "DB_DENIED",
-      message: "Manager database query was denied; token=do-not-log-this",
+      message: '{"password":"do-not-log-this"}',
       details: { password: "do-not-log-this" },
     });
 
     await expect(listTracked(caller)).rejects.toMatchObject({
       category: "request_rejected",
-      message: "Manager database query was denied; token=[redacted]",
+      message: "The manager database request was rejected.",
     });
 
     expect(logger).toHaveBeenCalledWith("[credential-manager] tracking load failed", {
       category: "request_rejected",
-      code: "DB_DENIED",
-      message: "Manager database query was denied; token=[redacted]",
     });
     expect(JSON.stringify(logger.mock.calls)).not.toContain("do-not-log-this");
   });
@@ -98,15 +98,20 @@ describe("listTracked", () => {
 
     await expect(listTracked(caller)).rejects.toMatchObject({
       category: "statement_error",
-      code: "TABLE_ERROR",
-      message: "Tracking query failed",
+      message: "The database rejected the tracking query.",
     });
 
     expect(logger).toHaveBeenCalledWith("[credential-manager] tracking load failed", {
       category: "statement_error",
-      code: "TABLE_ERROR",
-      message: "Tracking query failed",
+      statementStatus: "ERR",
     });
+  });
+
+  it("does not include untrusted messages or diagnostic values in tracking errors", () => {
+    const error = new TrackingLoadError("request_rejected");
+
+    expect(error.message).toBe("The manager database request was rejected.");
+    expect(error.diagnostics()).toEqual({ category: "request_rejected" });
   });
 });
 

@@ -17,63 +17,34 @@ type TrackingLoadFailureCategory =
 
 type TrackingLoadDiagnostics = {
   category: TrackingLoadFailureCategory;
-  code?: string;
-  message?: string;
+  statementStatus?: "ERR";
 };
 
 export class TrackingLoadError extends Error {
   readonly category: TrackingLoadFailureCategory;
-  readonly code?: string;
 
-  constructor(diagnostics: TrackingLoadDiagnostics) {
+  constructor(category: TrackingLoadFailureCategory) {
     const fallbackMessages: Record<TrackingLoadFailureCategory, string> = {
       request_rejected: "The manager database request was rejected.",
       statement_error: "The database rejected the tracking query.",
       invalid_response: "The database returned an invalid tracking response.",
       invalid_data: "Tracking records contain unsupported data.",
     };
-    super(diagnostics.message ?? fallbackMessages[diagnostics.category]);
+    super(fallbackMessages[category]);
     this.name = "TrackingLoadError";
-    this.category = diagnostics.category;
-    this.code = diagnostics.code;
+    this.category = category;
   }
 
   diagnostics(): TrackingLoadDiagnostics {
     return {
       category: this.category,
-      ...(this.code ? { code: this.code } : {}),
-      message: this.message,
+      ...(this.category === "statement_error" ? { statementStatus: "ERR" } : {}),
     };
   }
 }
 
-function safeDiagnosticMessage(value: unknown): string | undefined {
-  let message: string | undefined;
-  if (typeof value === "string") message = value;
-  else if (isRecord(value) && typeof value.message === "string") message = value.message;
-  else if (value instanceof Error) message = value.message;
-  if (!message) return undefined;
-
-  return message
-    .replace(/\b(password|token|secret|authorization)\b\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
-    .trim()
-    .slice(0, 300);
-}
-
-function safeDiagnosticCode(value: unknown): string | undefined {
-  if (!isRecord(value) || typeof value.code !== "string") return undefined;
-  return /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value.code) ? value.code : undefined;
-}
-
-function trackingLoadFailure(
-  category: TrackingLoadFailureCategory,
-  value?: unknown,
-): TrackingLoadError {
-  return new TrackingLoadError({
-    category,
-    ...(safeDiagnosticCode(value) ? { code: safeDiagnosticCode(value) } : {}),
-    ...(safeDiagnosticMessage(value) ? { message: safeDiagnosticMessage(value) } : {}),
-  });
+function trackingLoadFailure(category: TrackingLoadFailureCategory): TrackingLoadError {
+  return new TrackingLoadError(category);
 }
 
 function normalizedTarget(target: CredentialTarget): CredentialTarget {
@@ -148,7 +119,7 @@ export async function listTracked(caller: CredentialCaller): Promise<TrackedCred
     const [statement] = response.results;
     if (!isRecord(statement)) throw trackingLoadFailure("invalid_response");
     if (statement.status !== "OK") {
-      throw trackingLoadFailure("statement_error", statement.result);
+      throw trackingLoadFailure("statement_error");
     }
     if (!Array.isArray(statement.result)) throw trackingLoadFailure("invalid_response");
 
@@ -159,7 +130,7 @@ export async function listTracked(caller: CredentialCaller): Promise<TrackedCred
     }
   } catch (error) {
     const failure =
-      error instanceof TrackingLoadError ? error : trackingLoadFailure("request_rejected", error);
+      error instanceof TrackingLoadError ? error : trackingLoadFailure("request_rejected");
     console.error("[credential-manager] tracking load failed", failure.diagnostics());
     throw failure;
   }
