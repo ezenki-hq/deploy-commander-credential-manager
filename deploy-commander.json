@@ -1,5 +1,5 @@
 {
-  "name": "deploy-commander-credential-manager",
+  "name": "Credential Manager",
   "kind": "pipeline",
   "description": "Configure Docker platform credentials",
   "buildDirectory": "dist",
