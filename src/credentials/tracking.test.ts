@@ -1,15 +1,23 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CredentialCaller } from "./types";
-import { deleteTracked, listTracked, upsertTracked } from "./tracking";
+import { deleteTracked, listTracked, TrackingLoadError, upsertTracked } from "./tracking";
 
 type DatabaseQueryResult = Awaited<ReturnType<CredentialCaller["databaseQuery"]>>;
+
+afterEach(() => vi.restoreAllMocks());
 
 const queryResult = (status: "OK" | "ERR", result: unknown): DatabaseQueryResult => ({
   results: [{ statement: 0, status, time: "1ms", result }],
 });
 
+const schemaResult = queryResult("OK", {
+  tables: { credential_tracking: "DEFINE TABLE credential_tracking SCHEMALESS" },
+});
+
 const createCaller = (response: DatabaseQueryResult) => {
-  const databaseQuery = vi.fn().mockResolvedValue(response);
+  const databaseQuery = vi.fn((query: string) =>
+    Promise.resolve(query === "INFO FOR DB" ? schemaResult : response),
+  );
   const caller = { databaseQuery } as unknown as CredentialCaller;
   return { caller, databaseQuery };
 };
@@ -48,17 +56,69 @@ describe("listTracked", () => {
   });
 
   it("rejects malformed rows instead of hiding them", async () => {
+    const logger = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { caller } = createCaller(
       queryResult("OK", [{ scope: "prefix", prefix: null, username: "robot", updated_at: "now" }]),
     );
 
-    await expect(listTracked(caller)).rejects.toThrow();
+    await expect(listTracked(caller)).rejects.toMatchObject({
+      category: "invalid_data",
+      message: "Tracking records contain unsupported data.",
+    });
+    expect(logger).toHaveBeenCalledWith("[credential-manager] tracking load failed", {
+      category: "invalid_data",
+    });
   });
 
   it("rejects statement errors returned in a resolved query", async () => {
     const { caller } = createCaller(queryResult("ERR", "database policy error"));
 
     await expect(listTracked(caller)).rejects.toThrow();
+  });
+
+  it("logs categorized read failures with safe diagnostic detail only", async () => {
+    const logger = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { caller, databaseQuery } = createCaller(queryResult("OK", []));
+    databaseQuery.mockResolvedValueOnce(schemaResult);
+    databaseQuery.mockRejectedValueOnce({
+      code: "DB_DENIED",
+      message: '{"password":"do-not-log-this"}',
+      details: { password: "do-not-log-this" },
+    });
+
+    await expect(listTracked(caller)).rejects.toMatchObject({
+      category: "request_rejected",
+      message: "The manager database request was rejected.",
+    });
+
+    expect(logger).toHaveBeenCalledWith("[credential-manager] tracking load failed", {
+      category: "request_rejected",
+    });
+    expect(JSON.stringify(logger.mock.calls)).not.toContain("do-not-log-this");
+  });
+
+  it("exposes statement errors as categorized tracking load failures", async () => {
+    const logger = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { caller } = createCaller(
+      queryResult("ERR", { code: "TABLE_ERROR", message: "Tracking query failed" }),
+    );
+
+    await expect(listTracked(caller)).rejects.toMatchObject({
+      category: "statement_error",
+      message: "The database rejected the tracking query.",
+    });
+
+    expect(logger).toHaveBeenCalledWith("[credential-manager] tracking load failed", {
+      category: "statement_error",
+      statementStatus: "ERR",
+    });
+  });
+
+  it("does not include untrusted messages or diagnostic values in tracking errors", () => {
+    const error = new TrackingLoadError("request_rejected");
+
+    expect(error.message).toBe("The manager database request was rejected.");
+    expect(error.diagnostics()).toEqual({ category: "request_rejected" });
   });
 });
 

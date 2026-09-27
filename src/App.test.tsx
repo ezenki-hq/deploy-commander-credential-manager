@@ -11,7 +11,10 @@ const services = vi.hoisted(() => ({
   retryTracking: vi.fn(),
 }));
 
-vi.mock("./credentials/tracking", () => ({ listTracked: services.listTracked }));
+vi.mock("./credentials/tracking", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./credentials/tracking")>()),
+  listTracked: services.listTracked,
+}));
 vi.mock("./credentials/operations", () => ({
   saveCredential: services.saveCredential,
   removeCredential: services.removeCredential,
@@ -54,13 +57,68 @@ describe("credential manager", () => {
   });
 
   it("shows a retryable error instead of an empty list when loading fails", async () => {
-    services.listTracked.mockRejectedValueOnce(new Error("database unavailable"));
+    const user = userEvent.setup();
+    services.listTracked.mockRejectedValue(new Error("password=do-not-show-this"));
 
     renderApp();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/could not be loaded/i);
+    expect(screen.getByRole("alert")).not.toHaveTextContent("do-not-show-this");
+    expect(screen.getByRole("alert")).toHaveTextContent(/status is unknown/i);
     expect(screen.getByRole("button", { name: /retry loading/i })).toBeVisible();
     expect(screen.queryByText(/no registry-prefix credentials tracked/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /retry loading/i }));
+
+    expect(await screen.findByRole("alert")).not.toHaveTextContent("do-not-show-this");
+    expect(services.listTracked).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the confirmed save receipt visible after a successful tracking reload", async () => {
+    const user = userEvent.setup();
+    services.listTracked.mockRejectedValueOnce(new Error("load failed"));
+    services.listTracked.mockResolvedValueOnce([hubRecord]);
+
+    renderApp();
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: /set or replace docker hub credential/i }));
+    await user.type(screen.getByLabelText("Username"), "hub-robot");
+    await user.type(
+      screen.getByLabelText("Password, personal access token, or secret"),
+      "access-token-value",
+    );
+    await user.click(screen.getByRole("button", { name: /save credential/i }));
+
+    expect(await screen.findByText("hub-robot")).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /docker hub credential was applied to the agent and tracking was updated/i,
+    );
+  });
+
+  it("lets the user set a credential when tracking is unavailable and confirms the result", async () => {
+    const user = userEvent.setup();
+    services.listTracked.mockRejectedValue(new Error("Manager database query was denied"));
+
+    renderApp();
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: /set or replace docker hub credential/i }));
+    await user.type(screen.getByLabelText("Username"), "hub-robot");
+    await user.type(
+      screen.getByLabelText("Password, personal access token, or secret"),
+      "access-token-value",
+    );
+    await user.click(screen.getByRole("button", { name: /save credential/i }));
+
+    expect(services.saveCredential).toHaveBeenCalledWith(
+      expect.anything(),
+      { kind: "docker_hub" },
+      "hub-robot",
+      "access-token-value",
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /docker hub credential was applied to the agent and tracking was updated/i,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(/status is unknown/i);
   });
 
   it("shows empty Hub and prefix states when tracking loads with no rows", async () => {
