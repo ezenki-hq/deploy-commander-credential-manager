@@ -41,14 +41,20 @@ export default function App({ caller }: { caller: CredentialCaller }) {
   const [actionBusy, setActionBusy] = useState(false);
   const [retryError, setRetryError] = useState("");
   const [removeError, setRemoveError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [operationNotice, setOperationNotice] = useState("");
 
   const loadRecords = useCallback(async () => {
     setLoadState("loading");
     try {
       const loaded = await listTracked(caller);
       setRecords(loaded);
+      setLoadError("");
       setLoadState("ready");
-    } catch {
+    } catch (error) {
+      setLoadError(
+        error instanceof Error ? error.message : "The credential tracking request failed.",
+      );
       setLoadState("error");
     }
   }, [caller]);
@@ -79,6 +85,7 @@ export default function App({ caller }: { caller: CredentialCaller }) {
     secret: string,
   ): Promise<void> {
     if (writesDisabled) return;
+    setOperationNotice("");
     setActionBusy(true);
     try {
       const outcome = await saveCredential(caller, target, username, secret);
@@ -86,6 +93,10 @@ export default function App({ caller }: { caller: CredentialCaller }) {
       if (outcome.kind === "tracking_failed") {
         setPendingMutation(outcome.pending);
       } else {
+        const scope = target.kind === "docker_hub" ? "Docker Hub" : target.prefix;
+        setOperationNotice(
+          `${scope} credential was applied to the agent and tracking was updated.`,
+        );
         await loadRecords();
       }
     } finally {
@@ -124,6 +135,7 @@ export default function App({ caller }: { caller: CredentialCaller }) {
     try {
       await retryTracking(caller, pendingMutation);
       setPendingMutation(null);
+      setOperationNotice("Tracking metadata was updated. The agent credential was not resent.");
       await loadRecords();
     } catch {
       setRetryError("The tracking record could not be updated. Try again.");
@@ -196,21 +208,72 @@ export default function App({ caller }: { caller: CredentialCaller }) {
         )}
 
         {loadState === "error" && (
-          <section className="rounded-2xl border border-rose-200 bg-rose-50 p-5" role="alert">
-            <h2 className="font-semibold text-rose-950">
-              Credential tracking could not be loaded.
-            </h2>
-            <p className="mt-1 text-sm text-rose-900">
-              The saved list is unavailable, so no credentials are shown as unconfigured.
-            </p>
-            <button
-              className="mt-4 rounded-xl bg-rose-800 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-rose-200"
-              onClick={loadRecords}
-              type="button"
-            >
-              Retry loading
-            </button>
-          </section>
+          <div className="space-y-5">
+            <section className="rounded-2xl border border-rose-200 bg-rose-50 p-5" role="alert">
+              <h2 className="font-semibold text-rose-950">
+                Credential tracking could not be loaded.
+              </h2>
+              <p className="mt-1 text-sm text-rose-900">
+                {loadError || "The manager database request failed."} Existing agent credential
+                status is unknown because this manager cannot read credentials back.
+              </p>
+              <button
+                className="mt-4 rounded-xl bg-rose-800 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-rose-200 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={actionBusy}
+                onClick={loadRecords}
+                type="button"
+              >
+                {actionBusy ? "Retrying…" : "Retry loading"}
+              </button>
+            </section>
+
+            {operationNotice && (
+              <p
+                className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-medium text-emerald-900"
+                role="status"
+              >
+                {operationNotice}
+              </p>
+            )}
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+              <h2 className="text-lg font-semibold text-slate-950">
+                Configure credentials while tracking is unavailable
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                Saving updates the selected agent scope, replacing any credential there. The manager
+                will report whether it received confirmation and whether tracking saved.
+              </p>
+              {form ? (
+                <CredentialForm
+                  busy={writesDisabled}
+                  key={form.scope === "docker_hub" ? "docker_hub" : "prefix:new"}
+                  onCancel={() => setForm(null)}
+                  onSubmit={submitCredential}
+                  scope={form.scope}
+                />
+              ) : (
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <button
+                    className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={writesDisabled}
+                    onClick={() => openForm("docker_hub")}
+                    type="button"
+                  >
+                    Set or replace Docker Hub credential
+                  </button>
+                  <button
+                    className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-800 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={writesDisabled}
+                    onClick={() => openForm("prefix")}
+                    type="button"
+                  >
+                    Add or replace registry-prefix credential
+                  </button>
+                </div>
+              )}
+            </section>
+          </div>
         )}
 
         {loadState === "ready" && (

@@ -12,6 +12,70 @@ type TrackingRow = {
 
 const LIST_QUERY = "SELECT scope, prefix, username, updated_at FROM credential_tracking";
 
+type TrackingLoadFailureCategory =
+  "request_rejected" | "statement_error" | "invalid_response" | "invalid_data";
+
+type TrackingLoadDiagnostics = {
+  category: TrackingLoadFailureCategory;
+  code?: string;
+  message?: string;
+};
+
+export class TrackingLoadError extends Error {
+  readonly category: TrackingLoadFailureCategory;
+  readonly code?: string;
+
+  constructor(diagnostics: TrackingLoadDiagnostics) {
+    const fallbackMessages: Record<TrackingLoadFailureCategory, string> = {
+      request_rejected: "The manager database request was rejected.",
+      statement_error: "The database rejected the tracking query.",
+      invalid_response: "The database returned an invalid tracking response.",
+      invalid_data: "Tracking records contain unsupported data.",
+    };
+    super(diagnostics.message ?? fallbackMessages[diagnostics.category]);
+    this.name = "TrackingLoadError";
+    this.category = diagnostics.category;
+    this.code = diagnostics.code;
+  }
+
+  diagnostics(): TrackingLoadDiagnostics {
+    return {
+      category: this.category,
+      ...(this.code ? { code: this.code } : {}),
+      message: this.message,
+    };
+  }
+}
+
+function safeDiagnosticMessage(value: unknown): string | undefined {
+  let message: string | undefined;
+  if (typeof value === "string") message = value;
+  else if (isRecord(value) && typeof value.message === "string") message = value.message;
+  else if (value instanceof Error) message = value.message;
+  if (!message) return undefined;
+
+  return message
+    .replace(/\b(password|token|secret|authorization)\b\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .trim()
+    .slice(0, 300);
+}
+
+function safeDiagnosticCode(value: unknown): string | undefined {
+  if (!isRecord(value) || typeof value.code !== "string") return undefined;
+  return /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value.code) ? value.code : undefined;
+}
+
+function trackingLoadFailure(
+  category: TrackingLoadFailureCategory,
+  value?: unknown,
+): TrackingLoadError {
+  return new TrackingLoadError({
+    category,
+    ...(safeDiagnosticCode(value) ? { code: safeDiagnosticCode(value) } : {}),
+    ...(safeDiagnosticMessage(value) ? { message: safeDiagnosticMessage(value) } : {}),
+  });
+}
+
 function normalizedTarget(target: CredentialTarget): CredentialTarget {
   return target.kind === "prefix"
     ? { kind: "prefix", prefix: normalizePrefix(target.prefix) }
@@ -76,11 +140,28 @@ function parseRow(value: unknown): TrackedCredential {
 
 export async function listTracked(caller: CredentialCaller): Promise<TrackedCredential[]> {
   try {
-    const result = statementResult(await caller.databaseQuery(LIST_QUERY));
-    if (!Array.isArray(result)) throw new Error("Credential tracking data is invalid.");
-    return result.map(parseRow);
-  } catch {
-    throw new Error("Unable to load credential tracking records.");
+    const response = await caller.databaseQuery(LIST_QUERY);
+    if (!response || !Array.isArray(response.results) || response.results.length !== 1) {
+      throw trackingLoadFailure("invalid_response");
+    }
+
+    const [statement] = response.results;
+    if (!isRecord(statement)) throw trackingLoadFailure("invalid_response");
+    if (statement.status !== "OK") {
+      throw trackingLoadFailure("statement_error", statement.result);
+    }
+    if (!Array.isArray(statement.result)) throw trackingLoadFailure("invalid_response");
+
+    try {
+      return statement.result.map(parseRow);
+    } catch {
+      throw trackingLoadFailure("invalid_data");
+    }
+  } catch (error) {
+    const failure =
+      error instanceof TrackingLoadError ? error : trackingLoadFailure("request_rejected", error);
+    console.error("[credential-manager] tracking load failed", failure.diagnostics());
+    throw failure;
   }
 }
 
