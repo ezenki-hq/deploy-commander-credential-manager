@@ -10,8 +10,14 @@ const queryResult = (status: "OK" | "ERR", result: unknown): DatabaseQueryResult
   results: [{ statement: 0, status, time: "1ms", result }],
 });
 
+const schemaResult = queryResult("OK", {
+  tables: { credential_tracking: "DEFINE TABLE credential_tracking SCHEMALESS" },
+});
+
 const createCaller = (response: DatabaseQueryResult) => {
-  const databaseQuery = vi.fn().mockResolvedValue(response);
+  const databaseQuery = vi.fn((query: string) =>
+    Promise.resolve(query === "INFO FOR DB" ? schemaResult : response),
+  );
   const caller = { databaseQuery } as unknown as CredentialCaller;
   return { caller, databaseQuery };
 };
@@ -73,6 +79,7 @@ describe("listTracked", () => {
   it("logs categorized read failures with safe diagnostic detail only", async () => {
     const logger = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { caller, databaseQuery } = createCaller(queryResult("OK", []));
+    databaseQuery.mockResolvedValueOnce(schemaResult);
     databaseQuery.mockRejectedValueOnce({
       code: "DB_DENIED",
       message: '{"password":"do-not-log-this"}',
